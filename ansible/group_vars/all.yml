@@ -1,0 +1,30 @@
+---
+# Common variables for all hosts
+
+# Application settings
+app_name: student-app
+project_dir: ~/student-app
+
+# Database Configuration
+vault_db_password: "Saidur@7410"  # ⚠️ IMPORTANT: Change in production to secure password
+db_host: localhost
+db_port: 5432
+db_user: postgres
+db_name: student_db
+
+# Port Configuration
+frontend_port: 4050
+backend_port: 3000
+
+# Docker Configuration
+docker_registry: ""
+backend_image: student-app-backend:latest
+frontend_image: student-app-frontend:latest
+
+# Node.js Configuration
+node_env: production
+node_port: 3000
+
+# Nginx Configuration
+nginx_server_name: _
+nginx_listen_port: 4050

@@ -1,0 +1,201 @@
+---
+- name: Deploy Student App to Production
+  hosts: production
+  become: yes
+  vars:
+    project_dir: ~/student-app
+    frontend_port: 4050
+    backend_port: 3000
+    db_port: 5432
+    db_password: "{{ vault_db_password }}"
+
+  pre_tasks:
+    - name: Display deployment info
+      debug:
+        msg: "Deploying to {{ inventory_hostname }} - Frontend on port {{ frontend_port }}"
+
+  tasks:
+    - name: Update system packages
+      apt:
+        update_cache: yes
+        upgrade: dist
+      when: ansible_os_family == "Debian"
+      ignore_errors: yes
+
+    - name: Install required packages (Debian/Ubuntu)
+      apt:
+        name:
+          - docker.io
+          - docker-compose
+          - python3-pip
+          - python3-docker
+        state: present
+      when: ansible_os_family == "Debian"
+      ignore_errors: yes
+
+    - name: Ensure Docker service is started and enabled
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+      ignore_errors: yes
+
+    - name: Check if project directory exists
+      stat:
+        path: "{{ project_dir }}"
+      register: project_exists
+
+    - name: Create project directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - "{{ project_dir }}"
+        - "{{ project_dir }}/backend"
+        - "{{ project_dir }}/frontend"
+
+    - name: Copy backend Dockerfile
+      copy:
+        src: ../backend/Dockerfile
+        dest: "{{ project_dir }}/backend/"
+        mode: '0644'
+      ignore_errors: yes
+
+    - name: Copy backend package.json
+      copy:
+        src: ../backend/package.json
+        dest: "{{ project_dir }}/backend/"
+        mode: '0644'
+      ignore_errors: yes
+
+    - name: Copy backend server.js
+      copy:
+        src: ../backend/server.js
+        dest: "{{ project_dir }}/backend/"
+        mode: '0644'
+      ignore_errors: yes
+
+    - name: Copy frontend Dockerfile
+      copy:
+        src: ../frontend/Dockerfile
+        dest: "{{ project_dir }}/frontend/"
+        mode: '0644'
+      ignore_errors: yes
+
+    - name: Copy frontend nginx.conf
+      copy:
+        src: ../frontend/nginx.conf
+        dest: "{{ project_dir }}/frontend/"
+        mode: '0644'
+      ignore_errors: yes
+
+    - name: Copy frontend package.json
+      copy:
+        src: ../frontend/package.json
+        dest: "{{ project_dir }}/frontend/"
+        mode: '0644'
+      ignore_errors: yes
+
+    - name: Copy frontend public directory
+      copy:
+        src: ../frontend/public/
+        dest: "{{ project_dir }}/frontend/public/"
+        mode: '0755'
+      ignore_errors: yes
+
+    - name: Copy frontend src directory
+      copy:
+        src: ../frontend/src/
+        dest: "{{ project_dir }}/frontend/src/"
+        mode: '0755'
+      ignore_errors: yes
+
+    - name: Build backend Docker image
+      shell: |
+        cd {{ project_dir }}/backend
+        docker build -t student-app-backend:latest .
+      register: backend_build
+      ignore_errors: yes
+
+    - name: Build frontend Docker image
+      shell: |
+        cd {{ project_dir }}/frontend
+        docker build -t student-app-frontend:latest .
+      register: frontend_build
+      ignore_errors: yes
+
+    - name: Stop and remove running containers
+      shell: |
+        docker stop student-app-backend student-app-frontend student-app-postgres 2>/dev/null || true
+        docker rm student-app-backend student-app-frontend student-app-postgres 2>/dev/null || true
+      ignore_errors: yes
+
+    - name: Start PostgreSQL container
+      docker_container:
+        name: student-app-postgres
+        image: postgres:14
+        state: started
+        restart_policy: always
+        ports:
+          - "{{ db_port }}:5432"
+        env:
+          POSTGRES_PASSWORD: "{{ db_password }}"
+          POSTGRES_DB: student_db
+        volumes:
+          - postgres_data:/var/lib/postgresql/data
+      ignore_errors: yes
+
+    - name: Wait for PostgreSQL to be ready
+      wait_for:
+        host: "{{ inventory_hostname }}"
+        port: "{{ db_port }}"
+        delay: 5
+        timeout: 30
+      ignore_errors: yes
+
+    - name: Start backend container
+      docker_container:
+        name: student-app-backend
+        image: student-app-backend:latest
+        state: started
+        restart_policy: always
+        ports:
+          - "{{ backend_port }}:3000"
+        env:
+          NODE_ENV: production
+          DB_HOST: localhost
+          DB_PORT: '{{ db_port | string }}'
+          DB_USER: postgres
+          DB_PASSWORD: '{{ db_password }}'
+          DB_NAME: student_db
+      ignore_errors: yes
+
+    - name: Start frontend container
+      docker_container:
+        name: student-app-frontend
+        image: student-app-frontend:latest
+        state: started
+        restart_policy: always
+        ports:
+          - "{{ frontend_port }}:4050"
+      ignore_errors: yes
+
+    - name: Verify services are running
+      shell: |
+        docker ps --filter name=student-app
+      register: running_containers
+      changed_when: false
+      ignore_errors: yes
+
+  post_tasks:
+    - name: Deployment Summary
+      debug:
+        msg: |
+          ========================================
+          Deployment Complete!
+          ========================================
+          Frontend: http://{{ inventory_hostname }}:{{ frontend_port }}
+          Backend API: http://{{ inventory_hostname }}:{{ backend_port }}
+          Database: {{ inventory_hostname }}:{{ db_port }}
+          ========================================"

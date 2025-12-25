@@ -1,0 +1,57 @@
+---
+- name: Deploy Student App to k3s Kubernetes
+  hosts: production
+  become: yes
+  vars:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    namespace: student-app
+    k8s_dir_remote: /root/student-app/k8s
+  tasks:
+    - name: Ensure k8s directory exists on server
+      file:
+        path: "{{ k8s_dir_remote }}"
+        state: directory
+        mode: '0755'
+
+    - name: Copy Kubernetes manifests to server
+      copy:
+        src: ../k8s/
+        dest: "{{ k8s_dir_remote }}/"
+        mode: '0644'
+
+    - name: Create namespace if missing
+      shell: "kubectl --kubeconfig={{ kubeconfig }} get ns {{ namespace }} || kubectl --kubeconfig={{ kubeconfig }} create ns {{ namespace }}"
+      register: ns_result
+      changed_when: ns_result.rc == 0 and 'Created' in ns_result.stdout
+
+    - name: Apply PostgreSQL manifests
+      shell: "kubectl --kubeconfig={{ kubeconfig }} apply -f {{ k8s_dir_remote }}/postgres-deployment.yaml -n {{ namespace }}"
+
+    - name: Apply Backend manifests
+      shell: "kubectl --kubeconfig={{ kubeconfig }} apply -f {{ k8s_dir_remote }}/backend-deployment.yaml -n {{ namespace }}"
+
+    - name: Apply Frontend manifests
+      shell: "kubectl --kubeconfig={{ kubeconfig }} apply -f {{ k8s_dir_remote }}/frontend-deployment.yaml -n {{ namespace }}"
+
+    - name: Apply Ingress manifests (optional)
+      shell: "kubectl --kubeconfig={{ kubeconfig }} apply -f {{ k8s_dir_remote }}/ingress.yaml -n {{ namespace }}"
+      ignore_errors: yes
+
+    - name: Wait for deployments to be ready - backend
+      shell: "kubectl --kubeconfig={{ kubeconfig }} rollout status deployment/backend -n {{ namespace }} --timeout=180s"
+      register: backend_rollout
+      changed_when: false
+
+    - name: Wait for deployments to be ready - frontend
+      shell: "kubectl --kubeconfig={{ kubeconfig }} rollout status deployment/frontend -n {{ namespace }} --timeout=180s"
+      register: frontend_rollout
+      changed_when: false
+
+    - name: Show services
+      shell: "kubectl --kubeconfig={{ kubeconfig }} get svc -n {{ namespace }} -o wide"
+      register: svc_list
+      changed_when: false
+
+    - name: Output services
+      debug:
+        msg: "{{ svc_list.stdout_lines }}"

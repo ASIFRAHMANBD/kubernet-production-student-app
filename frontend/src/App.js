@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-const API_URL = 'http://198.46.141.67:30500';
+const API_URL = 'http://198.46.141.67:3000';
 
 function App() {
   const [students, setStudents] = useState([]);
